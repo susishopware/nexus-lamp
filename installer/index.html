@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nexus Lamp — Setup</title>
+    <script
+      type="module"
+      src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
+    ></script>
+    <style>
+      :root {
+        --blue: #0078bf;
+        --fg: #1c1c1c;
+        --bg: #fafafa;
+        --muted: #5a5a5a;
+        --line: #e2e2e2;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #ededed;
+          --bg: #161618;
+          --muted: #a0a0a0;
+          --line: #303034;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 3rem 1.25rem 5rem;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 40rem; margin: 0 auto; }
+      h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 0.4rem; }
+      .lede { color: var(--muted); margin: 0 0 2.5rem; }
+      h2 {
+        font-size: 1.05rem;
+        margin: 2.5rem 0 0.6rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--blue);
+      }
+      ol { padding-left: 1.3rem; }
+      li { margin-bottom: 0.5rem; }
+      .cta {
+        margin: 2rem 0;
+        padding: 1.5rem;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        text-align: center;
+        background: color-mix(in srgb, var(--blue) 6%, transparent);
+      }
+      esp-web-install-button[install-unsupported] { display: block; }
+      .unsupported {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.9em;
+        background: color-mix(in srgb, var(--fg) 8%, transparent);
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+      }
+      footer {
+        margin-top: 3rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Nexus Lamp</h1>
+      <p class="lede">
+        The 3D printed shopware Nexus logo, lit from the inside, that blinks when
+        a pull request lands. Everything below happens in this browser tab — no
+        software to install.
+      </p>
+
+      <div class="cta">
+        <esp-web-install-button manifest="manifest.json">
+          <span slot="unsupported" class="unsupported">
+            This browser cannot talk to USB devices. Please use Chrome or Edge on
+            a desktop — Safari and Firefox do not support Web Serial.
+          </span>
+          <span slot="not-allowed" class="unsupported">
+            Web Serial needs a secure connection (https).
+          </span>
+        </esp-web-install-button>
+      </div>
+
+      <h2>What to do</h2>
+      <ol>
+        <li>Plug the lamp into your computer with a USB-C <em>data</em> cable —
+          charge-only cables will not show up.</li>
+        <li>Hit <strong>Connect</strong> above and pick the serial port. On macOS
+          it is called <code>cu.usbserial-0001</code>, on Windows something like
+          <code>COM3</code>.</li>
+        <li>Choose <strong>Install Nexus Lampe</strong> and wait about a minute.</li>
+        <li>When it asks for WiFi, enter your own network. The lamp remembers it
+          across reboots and updates. It needs a <strong>2.4 GHz</strong> network —
+          the chip has no 5 GHz radio.</li>
+      </ol>
+
+      <h2>No cable handy?</h2>
+      <p>
+        A lamp that has not been set up yet opens its own hotspot called
+        <strong>Nexus Lampe Setup</strong>. Join it with a phone or laptop and a
+        setup page appears by itself; if it does not, browse to
+        <code>http://192.168.4.1</code>. Same result, no cable required.
+      </p>
+
+      <h2>Home Assistant</h2>
+      <p>
+        Optional. If you run Home Assistant, it discovers the lamp on its own once
+        it is on your WiFi — you will be asked for an encryption key, which comes
+        with the lamp. Without Home Assistant the lamp still works: it has its own
+        web page at <code>http://nexus-lampe-&lt;id&gt;.local</code>.
+      </p>
+
+      <footer>
+        Built with ESPHome. Curious how it works?
+        <a href="architecture.html">Read the architecture overview</a> — what talks
+        to what, and why it is built that way. Firmware sources and wiring notes
+        live in the project repository.
+      </footer>
+    </main>
+  </body>
+</html>

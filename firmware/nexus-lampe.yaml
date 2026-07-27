@@ -1,0 +1,542 @@
+# ===========================================================================
+# Shopware "Nexus" logo lamp — ESP32 + WS2812B
+#
+# Hardware:  ESP32-D0WD-V3 DevKit, 38 pin, CP2102 USB-C, 4 MB flash
+# LEDs:      WS2812B strip, 60 LED/m, cut to ${num_leds}, one daisy chain
+#            across both X halves (ESP -> half A -> half B)
+# Power:     USB-C on the ESP32 only. See ${current_cap} note below.
+#
+# Wiring, commissioning and the GitHub Actions trigger: see README.md
+# ===========================================================================
+
+substitutions:
+  name: nexus-lampe
+  friendly_name: Nexus Lampe
+
+  # Data pin for the strip. GPIO4 is free on both WROOM-32 and WROVER modules
+  # (GPIO16/17 are wired to PSRAM on WROVER, so we avoid them on purpose).
+  # Do not move this to GPIO0/2/12/15 (boot strapping), GPIO6-11 (SPI flash)
+  # or GPIO34-39 (input only).
+  led_pin: GPIO4
+
+  # Total LEDs across BOTH halves. Set to the number actually soldered.
+  num_leds: "10"
+
+  # Hard current ceiling, applied to every channel before output.
+  # A WS2812B pixel draws ~20 mA per channel, so ~60 mA at full white.
+  #   10 LEDs * 60 mA * 0.45 = ~270 mA  +  ESP32 WiFi peak ~150 mA  = ~420 mA
+  # That keeps us under the 500 mA a USB port is guaranteed to deliver, even
+  # if someone drags the brightness slider to 100 % on pure white.
+  current_cap: "45%"
+
+  # Flash duration and how long the fade back to the previous state takes.
+  flash_default_ms: "1500"
+  restore_transition: 400ms
+
+  # Bump on every shipped image, and keep installer/manifest.json in step —
+  # installer/build.sh reads this line to generate it.
+  project_version: "1.1.0"
+
+  # CI publishes to nexus/v1/pr/<repo>; lamps subscribe to the wildcard, so one
+  # publish reaches every lamp and the repo name stays available for later
+  # filtering. The v1 lets the payload schema change without breaking old lamps.
+  mqtt_pr_topic: "nexus/v1/pr/+"
+
+  # Where lamps look for newer firmware. This URL is burned into every shipped
+  # image and is effectively permanent — moving hosts would orphan old lamps.
+  # If it ever has to move, leave a redirect here: http_request follows up to
+  # three of them, so lamps in the field come along.
+  update_manifest_url: "https://susishopware.github.io/nexus-lamp/manifest.json"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.5.0
+  # Every lamp gets a unique hostname, nexus-lampe-<mac suffix>. Without this, two
+  # lamps on the same network fight over the same mDNS name.
+  name_add_mac_suffix: true
+  project:
+    name: "shopware.nexus_lampe"
+    version: ${project_version}
+  on_boot:
+    priority: -100
+    then:
+      - logger.log:
+          format: "Nexus lamp up: %d LEDs on ${led_pin}, current cap ${current_cap}"
+          args: ['${num_leds}']
+      # Remember what restore_mode brought back, so the greeting can hand the
+      # lamp over in the state its owner left it in.
+      - lambda: |-
+          auto v = id(nexus_x)->remote_values;
+          id(saved_on) = v.is_on();
+          id(saved_brightness) = v.get_brightness();
+          id(saved_red) = v.get_red();
+          id(saved_green) = v.get_green();
+          id(saved_blue) = v.get_blue();
+      # Short hello at power-on: red, green, blue. Doubles as the wiring check,
+      # because it needs no network, no app and no Home Assistant — the one test
+      # that works on a bare bench.
+      - script.execute: boot_greeting
+      - delay: 1700ms
+      - if:
+          condition:
+            lambda: "return id(ever_connected);"
+          then:
+            # A lamp that has been on someone's WiFi before is just a lamp.
+            - script.execute: pr_restore
+          else:
+            # Never provisioned: pulse for a while so it is obvious the thing is
+            # alive and waiting to be set up, then settle into being a lamp.
+            - script.execute: setup_beacon
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    # The boot log suggests minimum_chip_revision: "3.1" to shrink the binary.
+    # Do not: these lamps go to people whose boards we have never seen, and an
+    # image built that way refuses to start on an older revision. The few KB are
+    # not worth bricking someone's lamp.
+
+logger:
+  # ESPHome's default. CONFIG-level lines are where WiFi reports whether it
+  # joined a network or raised the setup hotspot, which is exactly what you want
+  # to see while commissioning a lamp over the cable.
+  level: DEBUG
+
+# --- Connectivity -----------------------------------------------------------
+
+# No credentials are baked in: this firmware ships to people whose networks we
+# cannot know. The recipient provisions the lamp once, either over USB or over
+# the setup hotspot, and the credentials are stored in the ESP32's NVS flash.
+# They survive reboots and OTA updates.
+wifi:
+  # Open setup hotspot, raised whenever no known network is in reach. Joining it
+  # pops up the captive portal by itself on iOS/Android/macOS; otherwise browse
+  # to http://192.168.4.1. Deliberately without a password so a colleague needs
+  # no instructions beyond "connect to the Nexus network" — set one here if you
+  # would rather trade convenience for it.
+  ap:
+    ssid: "Nexus Lampe Setup"
+
+  on_connect:
+    # Only on the very first connection this lamp ever makes — that is the
+    # moment someone is standing there wondering whether their password worked.
+    # Later reconnects stay silent, so a router reboot does not flash the lamp
+    # green in the middle of the evening.
+    - if:
+        condition:
+          lambda: "return !id(ever_connected);"
+        then:
+          # Latches in flash: from here on the lamp never nags again.
+          - lambda: "id(ever_connected) = true;"
+          - script.stop: setup_beacon
+          - script.execute: connected_ok
+
+# Serves the WiFi setup form on the hotspot above.
+captive_portal:
+
+# Provisioning over the USB cable, using the Improv standard. The recipient
+# opens https://web.esphome.io (or our own installer page) in Chrome or Edge,
+# picks the serial port and types in their WiFi — no CLI, no YAML, no install.
+improv_serial:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  actions:
+    # Trigger path A (recommended): Home Assistant calls
+    #   action: esphome.nexus_lampe_pr_event   data: {event: "opened"}
+    - action: pr_event
+      variables:
+        event: string
+      then:
+        - script.execute:
+            id: pr_event
+            event: !lambda "return event;"
+
+    # Full control, e.g. for one-off experiments from HA developer tools.
+    - action: pr_flash_rgb
+      variables:
+        red: float
+        green: float
+        blue: float
+        duration: int
+        blinks: int
+      then:
+        - script.execute:
+            id: pr_flash
+            red: !lambda "return red;"
+            green: !lambda "return green;"
+            blue: !lambda "return blue;"
+            duration: !lambda "return duration;"
+            blinks: !lambda "return blinks;"
+
+# The fan-out path for pull request events. Lamps live in other people's home
+# networks, so nothing can reach them from the outside — instead each lamp holds
+# an outbound TLS connection to a broker and subscribes to one broadcast topic.
+# CI publishes once, every lamp reacts. No port forwarding, no Home Assistant
+# required, and it scales to as many lamps as we hand out.
+mqtt:
+  broker: !secret mqtt_broker
+  port: 8883
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  certificate_authority: !secret mqtt_ca_cert
+
+  # We only ever listen. A null prefix suppresses the per-entity state and
+  # command topics, and with them the birth, will, shutdown and log topics — so
+  # a hundred lamps on one broker stay quiet instead of fighting over the same
+  # topics. Only the explicit subscription below remains.
+  topic_prefix: null
+  discovery: false
+
+  # Must be off, and this one is not obvious. With discover_ip enabled — which
+  # is the default — ESPHome subscribes to esphome/discover and esphome/ping/…
+  # and publishes its IP to esphome/discover/<name> immediately after every
+  # connect. All three are outside nexus/v1/pr/#, and a broker that enforces
+  # topic permissions answers a forbidden publish by closing the connection.
+  # The symptom is brutal to read: TLS and login succeed, the log says
+  # "Connected", and one second later "TCP disconnected", forever.
+  discover_ip: false
+
+  # Never reboot because the broker is unreachable. A recipient who never sets
+  # up MQTT still gets a perfectly working lamp; it just does not blink for PRs.
+  reboot_timeout: 0s
+
+  on_json_message:
+    - topic: ${mqtt_pr_topic}
+      then:
+        - script.execute:
+            id: pr_event
+            event: !lambda 'return x["event"].as<std::string>();'
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+  # Lets a lamp pull a new image itself, which is the only way updates reach a
+  # colleague's desk once the cable is gone.
+  - platform: http_request
+    id: ota_http
+
+# Verifies against the ESP-IDF certificate bundle, so any normal https host
+# (GitHub Pages included) works without pinning a CA here.
+http_request:
+  verify_ssl: true
+  timeout: 15s
+
+update:
+  - platform: http_request
+    name: "Firmware"
+    id: firmware_update
+    source: ${update_manifest_url}
+    update_interval: 6h
+
+# Trigger path B (optional): reachable only from inside the LAN, lets a
+# self-hosted runner POST straight at the lamp. Also handy as a manual UI.
+#   curl -u user:pass -X POST http://<ip>/button/pr_flash_test/press
+web_server:
+  port: 80
+  version: 3
+  auth:
+    type: digest
+    username: !secret web_username
+    password: !secret web_password
+
+# --- State kept across a flash ---------------------------------------------
+
+globals:
+  # Survives power cuts and OTA. Flips once, the first time this lamp ever
+  # joins a network, and decides whether it still needs the setup beacon.
+  - id: ever_connected
+    type: bool
+    restore_value: true
+    initial_value: "false"
+
+  # True while a flash is in flight, so a second trigger does not save the
+  # flash colour as the "previous" state to restore to.
+  - id: flash_active
+    type: bool
+    initial_value: "false"
+  - id: saved_on
+    type: bool
+    initial_value: "false"
+  - id: saved_brightness
+    type: float
+    initial_value: "1.0"
+  - id: saved_red
+    type: float
+    initial_value: "1.0"
+  - id: saved_green
+    type: float
+    initial_value: "1.0"
+  - id: saved_blue
+    type: float
+    initial_value: "1.0"
+
+# --- The light -------------------------------------------------------------
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: nexus_x
+    name: "X"
+    pin: ${led_pin}
+    num_leds: ${num_leds}
+    chipset: WS2812
+    rgb_order: GRB
+    # A USB lamp has no switch, so plugging it in has to mean light. Restores
+    # whatever state its owner left it in, and falls back to on when there is
+    # nothing saved yet.
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 300ms
+    # The current ceiling. Scales the output of every channel, so it caps the
+    # worst case no matter what brightness Home Assistant asks for.
+    color_correct: ["${current_cap}", "${current_cap}", "${current_cap}"]
+    effects:
+      - pulse:
+          name: "Pulse"
+          transition_length: 1s
+          update_interval: 1s
+      - addressable_rainbow:
+          name: "Rainbow"
+      - addressable_scan:
+          name: "Scan"
+
+# --- Scripts ---------------------------------------------------------------
+
+script:
+  # Flash a colour, then return to whatever the light was doing before.
+  - id: pr_flash
+    mode: restart
+    parameters:
+      red: float
+      green: float
+      blue: float
+      duration: int
+      blinks: int
+    then:
+      - if:
+          condition:
+            lambda: "return !id(flash_active);"
+          then:
+            - lambda: |-
+                // Remember the state we have to come back to.
+                auto v = id(nexus_x)->remote_values;
+                id(saved_on) = v.is_on();
+                id(saved_brightness) = v.get_brightness();
+                id(saved_red) = v.get_red();
+                id(saved_green) = v.get_green();
+                id(saved_blue) = v.get_blue();
+                id(flash_active) = true;
+      - repeat:
+          count: !lambda "return blinks < 1 ? 1 : blinks;"
+          then:
+            - light.turn_on:
+                id: nexus_x
+                brightness: 100%
+                red: !lambda "return red;"
+                green: !lambda "return green;"
+                blue: !lambda "return blue;"
+                transition_length: 0s
+            - delay: !lambda "return duration;"
+            - if:
+                condition:
+                  lambda: "return blinks > 1;"
+                then:
+                  - light.turn_off:
+                      id: nexus_x
+                      transition_length: 0s
+                  - delay: 150ms
+      - script.execute: pr_restore
+
+  - id: pr_restore
+    then:
+      - if:
+          condition:
+            lambda: "return id(saved_on);"
+          then:
+            - light.turn_on:
+                id: nexus_x
+                brightness: !lambda "return id(saved_brightness);"
+                red: !lambda "return id(saved_red);"
+                green: !lambda "return id(saved_green);"
+                blue: !lambda "return id(saved_blue);"
+                transition_length: ${restore_transition}
+          else:
+            - light.turn_off:
+                id: nexus_x
+                transition_length: ${restore_transition}
+      - lambda: "id(flash_active) = false;"
+
+  # Maps a GitHub event name to a colour, so the CI payload stays trivial.
+  - id: pr_event
+    mode: queued
+    parameters:
+      event: string
+    then:
+      - lambda: |-
+          // r, g, b as 0..1 ratios; brightness is applied separately.
+          float r = 0.0f, g = 0.47f, b = 0.75f;   // shopware blue #0078BF
+          int blinks = 2;
+          if (event == "merged") {                // GitHub purple #8250DF
+            r = 0.51f; g = 0.31f; b = 0.87f; blinks = 3;
+          } else if (event == "failure") {         // red #D1242F
+            r = 0.82f; g = 0.14f; b = 0.18f; blinks = 4;
+          } else if (event == "success") {         // green #1A7F37
+            r = 0.10f; g = 0.50f; b = 0.22f; blinks = 2;
+          } else if (event == "closed") {          // grey, PR closed unmerged
+            r = 0.40f; g = 0.40f; b = 0.40f; blinks = 2;
+          }
+          ESP_LOGI("pr_event", "event=%s -> rgb(%.2f, %.2f, %.2f) x%d",
+                   event.c_str(), r, g, b, blinks);
+          id(pr_flash)->execute(r, g, b, ${flash_default_ms}, blinks);
+
+  # Runs at every power-on: red, green, blue, then off. Confirms in ~1.2 s that
+  # the data line works and that rgb_order is right — red first, green second.
+  - id: boot_greeting
+    mode: single
+    then:
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 100%, green: 0%, blue: 0%, transition_length: 0s}
+      - delay: 400ms
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 0%, green: 100%, blue: 0%, transition_length: 0s}
+      - delay: 400ms
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 0%, green: 0%, blue: 100%, transition_length: 0s}
+      - delay: 400ms
+      - light.turn_off: {id: nexus_x, transition_length: 300ms}
+
+  # Slow blue breathing while the lamp has never been on a network. It stops the
+  # moment WiFi connects, and gives up after three minutes either way — a lamp
+  # whose owner never wants to connect it should still be a lamp, not a pulsing
+  # ornament. Latched in flash, so it happens once in the lamp's life, not after
+  # every router reboot.
+  - id: setup_beacon
+    mode: restart
+    then:
+      - while:
+          condition:
+            and:
+              - lambda: "return !id(ever_connected);"
+              - lambda: "return millis() < 180000;"
+          then:
+            - light.turn_on:
+                id: nexus_x
+                brightness: 90%
+                red: 0%
+                green: 47%
+                blue: 75%
+                transition_length: 1200ms
+            - delay: 1300ms
+            - light.turn_on:
+                id: nexus_x
+                brightness: 10%
+                red: 0%
+                green: 47%
+                blue: 75%
+                transition_length: 1200ms
+            - delay: 1300ms
+      - script.execute: default_light
+
+  # "Your password worked." Green is the one colour nobody has to look up, and it
+  # ends the setup by handing over to normal light.
+  - id: connected_ok
+    mode: restart
+    then:
+      - light.turn_on:
+          id: nexus_x
+          brightness: 100%
+          red: 0%
+          green: 100%
+          blue: 12%
+          transition_length: 250ms
+      - delay: 1300ms
+      - script.execute: default_light
+
+  # What the lamp does when nobody has told it anything: white, full brightness
+  # within the current cap. Usable straight out of the box, no app required.
+  - id: default_light
+    then:
+      - light.turn_on:
+          id: nexus_x
+          brightness: 100%
+          red: 100%
+          green: 100%
+          blue: 100%
+          transition_length: 1200ms
+
+  # Longer version on a button, for counting pixels and checking white balance.
+  # Expect red, then green, then blue, then white — in that order.
+  - id: led_selftest
+    mode: restart
+    then:
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 100%, green: 0%, blue: 0%, transition_length: 0s}
+      - delay: 1200ms
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 0%, green: 100%, blue: 0%, transition_length: 0s}
+      - delay: 1200ms
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 0%, green: 0%, blue: 100%, transition_length: 0s}
+      - delay: 1200ms
+      - light.turn_on: {id: nexus_x, brightness: 100%, red: 100%, green: 100%, blue: 100%, transition_length: 0s}
+      - delay: 1200ms
+      - light.turn_off: {id: nexus_x, transition_length: 0s}
+
+# --- Buttons ---------------------------------------------------------------
+
+button:
+  - platform: template
+    name: "LED self test"
+    id: led_selftest_button
+    icon: mdi:test-tube
+    on_press:
+      - script.execute: led_selftest
+
+  - platform: template
+    name: "PR flash test"
+    id: pr_flash_test
+    icon: mdi:source-pull
+    on_press:
+      - script.execute:
+          id: pr_event
+          event: "opened"
+
+  # Re-arms the setup sequence: beacon on the next boot, green on the next
+  # connect. Useful for testing it, and for checking what a colleague will
+  # actually see. Note it does not forget the WiFi credentials — for a genuine
+  # handover, reflash from the installer page, which erases them.
+  - platform: template
+    name: "Setup-Anzeige neu starten"
+    id: rearm_setup
+    icon: mdi:wifi-cog
+    entity_category: config
+    on_press:
+      - logger.log: "Re-arming setup indication, rebooting"
+      - lambda: "id(ever_connected) = false;"
+      - delay: 300ms
+      # safe_reboot flushes preferences first, so the cleared flag survives.
+      - lambda: "App.safe_reboot();"
+
+  - platform: restart
+    name: "Restart"
+    entity_category: config
+
+# --- Diagnostics -----------------------------------------------------------
+
+sensor:
+  - platform: wifi_signal
+    name: "WiFi signal"
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: uptime
+    name: "Uptime"
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP address"
+      entity_category: diagnostic
+    ssid:
+      name: "SSID"
+      entity_category: diagnostic
+  - platform: version
+    name: "ESPHome version"
+    entity_category: diagnostic

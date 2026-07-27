@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# Builds the firmware and publishes the installer directory to GitHub Pages.
+#
+# The result serves two audiences from one manifest: a browser flashing a fresh
+# lamp over USB (ESP Web Tools reads builds[].parts), and lamps already on
+# someone's desk checking for updates (the update platform reads builds[].ota).
+#
+# Repository secrets required:
+#   API_ENCRYPTION_KEY  OTA_PASSWORD  WEB_PASSWORD
+#   MQTT_BROKER  MQTT_USERNAME  MQTT_PASSWORD   ← the SUBSCRIBE-ONLY credential
+#
+# Everything in these secrets ends up readable inside the published image. The
+# publish credential must never be used here; it belongs to pr-flash.yml in the
+# watched repositories.
+# ---------------------------------------------------------------------------
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Pages allows one deployment at a time, and a half-finished rollout is worse
+# than a late one — so queue rather than cancel.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ESPHome
+        run: pip install --quiet esphome
+
+      # A lamp decides whether an update exists by comparing version strings, so
+      # a tag that disagrees with project_version would ship an image the fleet
+      # never offers to install.
+      - name: Tag must match project_version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -nE 's/^[[:space:]]*project_version:[[:space:]]*"([^"]+)".*/\1/p' \
+            firmware/nexus-lampe.yaml | head -1)
+          tag="${GITHUB_REF_NAME#v}"
+          if [[ "$version" != "$tag" ]]; then
+            echo "::error::tag $tag does not match project_version $version"
+            exit 1
+          fi
+          echo "version $version"
+
+      - name: Assemble secrets
+        env:
+          API_ENCRYPTION_KEY: ${{ secrets.API_ENCRYPTION_KEY }}
+          OTA_PASSWORD: ${{ secrets.OTA_PASSWORD }}
+          WEB_PASSWORD: ${{ secrets.WEB_PASSWORD }}
+          MQTT_BROKER: ${{ secrets.MQTT_BROKER }}
+          MQTT_USERNAME: ${{ secrets.MQTT_USERNAME }}
+          MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
+        run: firmware/make-secrets.sh
+
+      - name: Build firmware and manifest
+        run: installer/build.sh
+
+      - name: Sanity check the manifest
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          m = json.loads(pathlib.Path("installer/manifest.json").read_text())
+          b = m["builds"][0]
+          assert b["chipFamily"] == "ESP32", b["chipFamily"]
+          assert b["ota"]["md5"] and b["ota"]["path"]
+          assert b["parts"][0]["path"]
+          for p in (b["ota"]["path"], b["parts"][0]["path"]):
+              f = pathlib.Path("installer") / p
+              assert f.is_file() and f.stat().st_size > 500_000, f
+          print("manifest ok:", m["name"], m["version"], b["ota"]["md5"])
+          PY
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: installer
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

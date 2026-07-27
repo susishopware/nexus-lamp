@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nexus Lampe — Architektur</title>
+<style>
+  :root {
+    --paper: #eef2f4; --card: #ffffff; --ink: #0d1417; --ink-soft: #47565c;
+    --ink-faint: #78878e; --line: #d2dadd; --line-soft: #e3e9eb;
+    --signal: #0078bf; --copper: #a96a35; --green: #1f7a4d; --violet: #7048c4;
+    --red: #c4362d; --flag: #8a5a00; --flag-bg: #fdf4e3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0c1013; --card: #141a1e; --ink: #e7edef; --ink-soft: #9caab1;
+      --ink-faint: #6b7a81; --line: #253036; --line-soft: #1c2529;
+      --signal: #3ea9e6; --copper: #d2934f; --green: #4ec08a; --violet: #a688ee;
+      --red: #e9655b; --flag: #e0b055; --flag-bg: #1e1a11;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: clamp(1.5rem,4vw,3.5rem) 1.25rem 6rem;
+    background: var(--paper); color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 16px; line-height: 1.65; -webkit-font-smoothing: antialiased;
+  }
+  .sheet { max-width: 56rem; margin: 0 auto; display: flex; flex-direction: column; gap: 2.75rem; }
+  header { display: flex; flex-direction: column; gap: 0.75rem; }
+  .eyebrow {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  h1 { margin: 0; font-size: clamp(1.75rem,4.5vw,2.5rem); line-height: 1.1;
+       letter-spacing: -0.02em; font-weight: 650; text-wrap: balance; }
+  .lede { margin: 0; max-width: 48ch; color: var(--ink-soft); font-size: 1.0625rem; }
+  section { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+  h2 {
+    margin: 0; font-size: 0.78rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--signal);
+    padding-bottom: 0.5rem; border-bottom: 1px solid var(--line);
+  }
+  p { margin: 0; max-width: 68ch; }
+  strong { font-weight: 620; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875em;
+    background: color-mix(in srgb, var(--ink) 7%, transparent);
+    padding: 0.1em 0.35em; border-radius: 3px;
+  }
+  figure { margin: 0; background: var(--card); border: 1px solid var(--line);
+           border-radius: 6px; overflow: hidden; }
+  .plate { overflow-x: auto; padding: 1.25rem; }
+  .plate svg { display: block; min-width: 460px; width: 100%; height: auto; }
+  figcaption { padding: 0.8rem 1.25rem; border-top: 1px solid var(--line-soft);
+               color: var(--ink-soft); font-size: 0.875rem; }
+  .svg-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size: 11.5px; letter-spacing: 0.03em; }
+  .svg-note { font-family: system-ui, sans-serif; font-size: 11px; fill: var(--ink-faint); }
+  .svg-title { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; fill: var(--ink-faint); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+  th, td { text-align: left; padding: 0.55rem 0.9rem 0.55rem 0; border-bottom: 1px solid var(--line-soft);
+           vertical-align: top; }
+  th { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem;
+       letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
+  td:first-child { white-space: nowrap; padding-right: 1.5rem; }
+  .scroll { overflow-x: auto; }
+  dl.why { margin: 0; display: flex; flex-direction: column; gap: 1.1rem; }
+  dl.why > div { display: flex; flex-direction: column; gap: 0.2rem; max-width: 68ch;
+                 padding-bottom: 1.1rem; border-bottom: 1px solid var(--line-soft); }
+  dl.why > div:last-child { border-bottom: 0; padding-bottom: 0; }
+  dl.why dt { font-weight: 620; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 0.9rem; }
+  dl.why dd { margin: 0; color: var(--ink-soft); }
+  .flag { display: flex; flex-wrap: wrap; gap: 0.4rem 0.85rem; padding: 0.9rem 1.1rem;
+          background: var(--flag-bg); border: 1px solid color-mix(in srgb, var(--flag) 35%, transparent);
+          border-radius: 4px; }
+  .flag .mark { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.7rem;
+                letter-spacing: 0.12em; text-transform: uppercase; color: var(--flag); padding-top: 0.2rem; }
+  .flag p { flex: 1 1 16rem; min-width: 0; max-width: 58ch; }
+  footer { color: var(--ink-faint); font-size: 0.8125rem; border-top: 1px solid var(--line);
+           padding-top: 1.25rem; max-width: 68ch; }
+  a { color: var(--signal); }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header>
+    <div class="eyebrow">Nexus Lampe</div>
+    <h1>Wie das Ganze funktioniert</h1>
+    <p class="lede">Eine 3D-gedruckte Nexus-Lampe, die blitzt, wenn ein Pull Request
+      landet — auf Schreibtischen, an die niemand herankommt.</p>
+  </header>
+
+  <section>
+    <h2>Das Problem, das die Architektur bestimmt</h2>
+    <p>Die Lampen stehen in den Wohnungen von Kolleginnen und Kollegen. Hinter
+      fremden Routern, hinter NAT, ohne feste IP, ohne VPN. <strong>Nichts von
+      außen kann sie erreichen</strong> — ein GitHub-Runner schon gar nicht.</p>
+    <p>Deshalb dreht die Architektur die Richtung um: jede Lampe baut selbst eine
+      ausgehende Verbindung auf und wartet darauf, dass ihr etwas erzählt wird. CI
+      schickt eine einzige Nachricht an einen Broker, und alle Lampen reagieren.
+      Kein Portforwarding, keine feste Adresse, kein Home Assistant nötig — und es
+      ist egal, ob drei oder dreißig Lampen im Umlauf sind.</p>
+  </section>
+
+  <section>
+    <h2>Gesamtbild</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 880 430" role="img"
+             aria-label="GitHub Actions publiziert an einen MQTT-Broker; die Lampen im Heimnetz abonnieren ausgehend. Updates holen sie sich per HTTPS von GitHub Pages.">
+          <!-- divider -->
+          <path d="M520 20 V 410" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5" fill="none"/>
+          <text x="508" y="36" class="svg-title" text-anchor="end">unsere Infrastruktur</text>
+          <text x="532" y="36" class="svg-title">fremdes Heimnetz</text>
+
+          <!-- GitHub Actions -->
+          <rect x="26" y="58" width="180" height="66" rx="6" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="42" y="84" class="svg-label" fill="var(--ink)">GitHub Actions</text>
+          <text x="42" y="102" class="svg-note">pr-flash.yml</text>
+          <text x="42" y="116" class="svg-note">im beobachteten Repo</text>
+
+          <!-- Broker -->
+          <rect x="300" y="58" width="180" height="66" rx="6" fill="none" stroke="var(--signal)" stroke-width="1.8"/>
+          <text x="316" y="84" class="svg-label" fill="var(--signal)">HiveMQ Cloud</text>
+          <text x="316" y="102" class="svg-note">MQTT über TLS, Port 8883</text>
+          <text x="316" y="116" class="svg-note">nexus/v1/pr/…</text>
+
+          <!-- Pages -->
+          <rect x="26" y="286" width="180" height="66" rx="6" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="42" y="312" class="svg-label" fill="var(--ink)">GitHub Pages</text>
+          <text x="42" y="330" class="svg-note">manifest.json</text>
+          <text x="42" y="344" class="svg-note">factory.bin · ota.bin</text>
+
+          <!-- Lamp -->
+          <rect x="596" y="130" width="180" height="76" rx="6" fill="none" stroke="var(--line)" stroke-width="1.5"/>
+          <text x="612" y="156" class="svg-label" fill="var(--ink)">Nexus Lampe</text>
+          <text x="612" y="174" class="svg-note">ESP32 · 10 × WS2812B</text>
+          <text x="612" y="188" class="svg-note">nur ausgehende Verbindungen</text>
+
+          <!-- HA optional -->
+          <rect x="596" y="284" width="180" height="60" rx="6" fill="none" stroke="var(--line-soft)"
+                stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="612" y="310" class="svg-label" fill="var(--ink-faint)">Home Assistant</text>
+          <text x="612" y="328" class="svg-note">optional, rein lokal</text>
+
+          <!-- publish arrow -->
+          <path d="M206 91 H 292" stroke="var(--copper)" stroke-width="2.4" fill="none"/>
+          <path d="M300 91 l -9 -5 v 10 z" fill="var(--copper)"/>
+          <text x="212" y="80" class="svg-label" fill="var(--copper)">publish</text>
+          <text x="212" y="112" class="svg-note">nexus-ci · nur senden</text>
+
+          <!-- subscribe arrow, lamp -> broker (leftwards, crossing the divider) -->
+          <path d="M596 156 H 500 Q 488 156 488 144 V 132" stroke="var(--signal)" stroke-width="2.4" fill="none"/>
+          <path d="M488 124 l -5 9 h 10 z" fill="var(--signal)"/>
+          <text x="516" y="150" class="svg-label" fill="var(--signal)">subscribe</text>
+          <text x="516" y="176" class="svg-note">nexus-lamp · nur empfangen</text>
+          <text x="516" y="190" class="svg-note">ausgehend aufgebaut</text>
+
+          <!-- update arrow, lamp -> pages -->
+          <path d="M640 206 V 250 H 240 Q 226 250 226 264 V 280" stroke="var(--ink-faint)"
+                stroke-width="2" fill="none" stroke-dasharray="5 4"/>
+          <path d="M226 286 l -5 -9 h 10 z" fill="var(--ink-faint)"/>
+          <text x="330" y="242" class="svg-note">Update-Prüfung, https, alle 6 h — ebenfalls ausgehend</text>
+
+          <!-- HA local link -->
+          <path d="M686 284 V 206" stroke="var(--line)" stroke-width="1.6" stroke-dasharray="4 4" fill="none"/>
+          <text x="700" y="250" class="svg-note">ESPHome-API, verschlüsselt</text>
+
+          <!-- note -->
+          <text x="596" y="382" class="svg-note">Beide Pfeile über die Grenze starten rechts.</text>
+          <text x="596" y="398" class="svg-note">Von links kommt nichts herein.</text>
+        </svg>
+      </div>
+      <figcaption>Jede Verbindung über die Netzgrenze wird von der Lampe aufgebaut.
+        Der Broker ist der einzige Treffpunkt — CI legt dort eine Nachricht ab, die
+        Lampen holen sie sich ab.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Was passiert, wenn ein Pull Request landet</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 880 200" role="img"
+             aria-label="Ablauf: Zustand sichern, Statusfarbe blitzen, in den vorherigen Zustand zurückfaden.">
+          <text x="24" y="26" class="svg-title">Ablauf, etwa 6 Sekunden</text>
+
+          <path d="M24 108 H 856" stroke="var(--line)" stroke-width="1.5" fill="none"/>
+
+          <g>
+            <circle cx="70" cy="108" r="6" fill="var(--ink-faint)"/>
+            <text x="70" y="88" class="svg-label" fill="var(--ink)" text-anchor="middle">Ereignis</text>
+            <text x="70" y="132" class="svg-note" text-anchor="middle">{"event":"merged"}</text>
+          </g>
+          <g>
+            <circle cx="250" cy="108" r="6" fill="var(--ink-faint)"/>
+            <text x="250" y="88" class="svg-label" fill="var(--ink)" text-anchor="middle">Zustand sichern</text>
+            <text x="250" y="132" class="svg-note" text-anchor="middle">an/aus, Helligkeit, Farbe</text>
+          </g>
+          <g>
+            <circle cx="470" cy="108" r="6" fill="var(--violet)"/>
+            <text x="470" y="88" class="svg-label" fill="var(--violet)" text-anchor="middle">blitzen</text>
+            <text x="470" y="132" class="svg-note" text-anchor="middle">Farbe und Anzahl je Ereignis</text>
+          </g>
+          <g>
+            <circle cx="700" cy="108" r="6" fill="var(--green)"/>
+            <text x="700" y="88" class="svg-label" fill="var(--green)" text-anchor="middle">zurückfaden</text>
+            <text x="700" y="132" class="svg-note" text-anchor="middle">exakt der vorherige Zustand</text>
+          </g>
+
+          <text x="24" y="176" class="svg-note">Kommt währenddessen ein zweites Ereignis, beginnt der Blitz neu —</text>
+          <text x="24" y="190" class="svg-note">der ursprünglich gesicherte Zustand bleibt erhalten, damit die Lampe nie in einer Statusfarbe hängen bleibt.</text>
+        </svg>
+      </div>
+      <figcaption>Die Lampe bleibt die Lampe ihres Besitzers. Sie wird kurz zum
+        Statusmelder und kehrt danach in genau den Zustand zurück, in dem sie war.</figcaption>
+    </figure>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Ereignis</th><th>Farbe</th><th>Impulse</th></tr></thead>
+        <tbody>
+          <tr><td><code>opened</code></td><td>Shopware-Blau <code>#0078BF</code></td><td>2</td></tr>
+          <tr><td><code>merged</code></td><td>Lila <code>#8250DF</code></td><td>3</td></tr>
+          <tr><td><code>failure</code></td><td>Rot <code>#D1242F</code></td><td>4</td></tr>
+          <tr><td><code>success</code></td><td>Grün <code>#1A7F37</code></td><td>2</td></tr>
+          <tr><td><code>closed</code></td><td>Grau</td><td>2</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Erstes Einschalten</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 880 210" role="img"
+             aria-label="Zustandsfolge beim ersten Einschalten: Gruß, blaues Atmen, grün bei Verbindung, dann weiß.">
+          <text x="24" y="26" class="svg-title">was der Empfänger sieht</text>
+
+          <g>
+            <rect x="24" y="52" width="150" height="58" rx="5" fill="none" stroke="var(--line)"/>
+            <text x="40" y="76" class="svg-label" fill="var(--ink)">rot · grün · blau</text>
+            <text x="40" y="94" class="svg-note">1,2 s — Verdrahtungstest</text>
+          </g>
+          <path d="M174 81 H 208" stroke="var(--ink-faint)" stroke-width="1.6" fill="none"/>
+          <path d="M214 81 l -8 -4 v 8 z" fill="var(--ink-faint)"/>
+
+          <g>
+            <rect x="214" y="52" width="176" height="58" rx="5" fill="none" stroke="var(--signal)" stroke-width="1.6"/>
+            <text x="230" y="76" class="svg-label" fill="var(--signal)">blaues Atmen</text>
+            <text x="230" y="94" class="svg-note">wartet auf Einrichtung</text>
+          </g>
+          <path d="M390 81 H 424" stroke="var(--ink-faint)" stroke-width="1.6" fill="none"/>
+          <path d="M430 81 l -8 -4 v 8 z" fill="var(--ink-faint)"/>
+
+          <g>
+            <rect x="430" y="52" width="150" height="58" rx="5" fill="none" stroke="var(--green)" stroke-width="1.6"/>
+            <text x="446" y="76" class="svg-label" fill="var(--green)">grün</text>
+            <text x="446" y="94" class="svg-note">1,3 s — WLAN steht</text>
+          </g>
+          <path d="M580 81 H 614" stroke="var(--ink-faint)" stroke-width="1.6" fill="none"/>
+          <path d="M620 81 l -8 -4 v 8 z" fill="var(--ink-faint)"/>
+
+          <g>
+            <rect x="620" y="52" width="150" height="58" rx="5" fill="none" stroke="var(--line)"/>
+            <text x="636" y="76" class="svg-label" fill="var(--ink)">weiß</text>
+            <text x="636" y="94" class="svg-note">ab jetzt eine Lampe</text>
+          </g>
+
+          <path d="M302 110 V 146 H 700" stroke="var(--ink-faint)" stroke-width="1.4"
+                stroke-dasharray="4 4" fill="none"/>
+          <path d="M700 146 l -8 -4 v 8 z" fill="var(--ink-faint)"/>
+          <text x="316" y="164" class="svg-note">nach drei Minuten ohne Verbindung auch von allein — wer nie verbinden will, bekommt trotzdem Licht</text>
+          <text x="24" y="194" class="svg-note">Das blaue Atmen läuft genau einmal im Leben der Lampe. Ein Merker im Flash sorgt dafür, dass ein Router-Neustart es nicht erneut auslöst.</text>
+        </svg>
+      </div>
+      <figcaption>WLAN wird per USB im Browser oder über den eigenen Hotspot der
+        Lampe eingetragen. Nichts davon ist in der Firmware fest hinterlegt — jede
+        Lampe fragt ihren eigenen Besitzer.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Sicherheitsmodell</h2>
+    <p>Die Lampen holen ihre Updates aus fremden Netzen, die URL muss also ohne
+      Login erreichbar sein. Damit ist das Firmware-Image für jeden
+      herunterladbar — <strong>alles darin gilt als öffentlich</strong>. Die
+      Architektur ist so gebaut, dass das folgenlos bleibt.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Geheimnis</th><th>Wo es lebt</th><th>Was ein Fund erlaubt</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>nexus-lamp</code></td>
+            <td>in jedem Image, also öffentlich</td>
+            <td>PR-Ereignisse mitlesen. Publizieren ist am Broker verboten, gefälschte Ereignisse sind unmöglich.</td>
+          </tr>
+          <tr>
+            <td><code>nexus-ci</code></td>
+            <td>nur in GitHub-Actions-Secrets</td>
+            <td>Ereignisse senden. Kommt nie in eine Firmware.</td>
+          </tr>
+          <tr>
+            <td>API-Key, OTA-Passwort</td>
+            <td>im Image</td>
+            <td>Die Lampe steuern oder neu flashen — aber nur aus demselben WLAN heraus.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="flag">
+      <span class="mark">geprüft</span>
+      <p>Die Trennung ist nicht bloß konfiguriert, sondern nachgewiesen: ein
+        Publish-Versuch mit dem Lampen-Zugang wird vom Broker mit dem Schließen der
+        Verbindung beantwortet. Die Gegenprobe gehört zur Inbetriebnahme.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Entscheidungen, die nicht offensichtlich sind</h2>
+    <dl class="why">
+      <div>
+        <dt>discover_ip: false</dt>
+        <dd>Standardmäßig publiziert ESPHome nach jedem Verbinden seine IP nach
+          <code>esphome/discover/…</code> und abonniert zwei weitere Topics. Alle drei
+          liegen außerhalb der erlaubten Rechte, und ein Broker mit Topic-Rechten
+          beantwortet einen unerlaubten Publish mit dem Schließen der Verbindung. Das
+          Symptom ist irreführend: TLS und Anmeldung gelingen, das Log meldet
+          <em>Connected</em>, eine Sekunde später <em>TCP disconnected</em>, endlos.</dd>
+      </div>
+      <div>
+        <dt>topic_prefix: null</dt>
+        <dd>Unterdrückt sämtliche Zustands-, Kommando-, Birth-, Will- und Log-Topics.
+          Die Lampen hören ausschließlich zu. Ohne das würden alle Lampen mit
+          identischem Prefix auf demselben Broker übereinander schreiben.</dd>
+      </div>
+      <div>
+        <dt>kein Retain beim Publizieren</dt>
+        <dd>Eine retained Nachricht bekäme jede Lampe bei jedem Reconnect erneut
+          zugestellt. Ein Router-Neustart würde die ganze Flotte für einen Pull
+          Request von letzter Woche blitzen lassen.</dd>
+      </div>
+      <div>
+        <dt>reboot_timeout: 0s</dt>
+        <dd>ESPHome startet sonst nach 15 Minuten ohne Broker neu. Wer MQTT nie
+          einrichtet, soll trotzdem eine funktionierende Lampe haben — sie blitzt
+          dann eben nicht.</dd>
+      </div>
+      <div>
+        <dt>restore_mode: RESTORE_DEFAULT_ON</dt>
+        <dd>Eine USB-Lampe hat keinen Schalter. Einstecken muss Licht bedeuten, und
+          nach einem Stromausfall muss der vorherige Zustand zurückkommen.</dd>
+      </div>
+      <div>
+        <dt>Helligkeit auf 45 % gedeckelt</dt>
+        <dd>Zehn WS2812B ziehen bei Vollweiß rund 600 mA, mehr als ein USB-Port
+          garantiert liefert. Die Deckelung sitzt unterhalb des Helligkeitsreglers und
+          greift deshalb auch dann, wenn jemand auf 100 % stellt.</dd>
+      </div>
+      <div>
+        <dt>Datenleitung auf GPIO4</dt>
+        <dd>GPIO16 wäre naheliegend, liegt auf WROVER-Modulen aber am PSRAM. GPIO4 ist
+          auf beiden Varianten frei — eine Unbekannte weniger bei Boards, die wir nie
+          gesehen haben.</dd>
+      </div>
+      <div>
+        <dt>zwei Wurzelzertifikate im CA-File</dt>
+        <dd>Let's Encrypt ist auf eine neue Wurzel umgestiegen und liefert sie derzeit
+          von ISRG Root X1 quersigniert aus. Beide sind hinterlegt, damit die Lampen
+          den Broker auch dann noch erreichen, wenn die Quersignatur wegfällt.</dd>
+      </div>
+    </dl>
+  </section>
+
+  <footer>
+    Firmware mit ESPHome, Broker HiveMQ Cloud, Auslieferung über GitHub Pages.
+    Verdrahtung, Inbetriebnahme und Fehlersuche stehen in
+    <code>firmware/README.md</code> im Repository.
+  </footer>
+
+</div>
+</body>
+</html>
