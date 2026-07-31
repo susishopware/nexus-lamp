@@ -9,4 +9,4 @@ der Lampen im Feld:
 
 | Datum | Anlass | Ergebnis |
 |---|---|---|
-| 2026-07-31 | Routinecheck: Action + Lampen nach Firmware-Release | _ausstehend_ |
+| 2026-07-31 | Routinecheck: Action + Lampen nach Firmware-Release (PR #1) | OK — Publish-Secrets (`MQTT_HOST`/`MQTT_USER`/`MQTT_PASS`) fehlten und wurden nachgetragen; danach `opened` bestätigt: 2× blau |
