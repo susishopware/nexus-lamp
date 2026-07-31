@@ -6,7 +6,7 @@
 #            across both X halves (ESP -> half A -> half B)
 # Power:     USB-C on the ESP32 only. See ${current_cap} note below.
 #
-# Wiring, commissioning and the GitHub Actions trigger: see README.md
+# Wiring, commissioning and the n8n pull request trigger: see README.md
 # ===========================================================================
 
 substitutions:

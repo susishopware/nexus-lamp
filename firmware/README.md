@@ -181,26 +181,27 @@ Only once this passes is it worth soldering.
 
 **Primary path: MQTT.** The lamps sit in other people's home networks, so
 nothing can reach them from the outside. Instead each lamp holds an outbound
-TLS connection to a broker and subscribes to one broadcast topic. CI publishes
+TLS connection to a broker and subscribes to one broadcast topic. n8n publishes
 once and every lamp reacts — no port forwarding, no Home Assistant needed, and
 it scales to however many lamps we hand out.
 
 ```
-GitHub Action  --publish-->  broker (8883, TLS)  <--subscribe--  lamp, lamp, lamp
+GitHub webhook  -->  n8n  --publish-->  broker (8883, TLS)  <--subscribe--  lamp, lamp, lamp
 ```
 
 Fill in `mqtt_broker`, `mqtt_username` and `mqtt_password` in `secrets.yaml`
-(currently `CHANGEME`), then set the same values as repository secrets
-`MQTT_HOST`, `MQTT_USER`, `MQTT_PASS`, `MQTT_TOPIC` for
-[`../.github/workflows/pr-flash.yml`](../.github/workflows/pr-flash.yml). That
-workflow belongs in the repositories you want to watch, not just here.
+(currently `CHANGEME`) — that is the subscribe-only credential baked into the
+image. The publish-only credential is configured once in the n8n workflow that
+turns GitHub `pull_request` webhooks into MQTT messages (see the root README,
+"Watching a repository"); the watched repositories themselves need no files
+and no secrets.
 
-Test the whole chain by hand:
+Test the whole chain by hand (with the publish credential):
 
 ```bash
 mosquitto_pub -h "$MQTT_HOST" -p 8883 --capath /etc/ssl/certs \
   -u "$MQTT_USER" -P "$MQTT_PASS" \
-  -t shopware/nexus/pr -m '{"event":"merged"}'
+  -t nexus/v1/pr/manual-test -m '{"event":"merged"}'
 ```
 
 `mqtt_ca_cert` in `secrets.yaml` holds ISRG Root X1, which covers brokers whose

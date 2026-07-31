@@ -101,7 +101,7 @@
       fremden Routern, hinter NAT, ohne feste IP, ohne VPN. <strong>Nichts von
       außen kann sie erreichen</strong> — ein GitHub-Runner schon gar nicht.</p>
     <p>Deshalb dreht die Architektur die Richtung um: jede Lampe baut selbst eine
-      ausgehende Verbindung auf und wartet darauf, dass ihr etwas erzählt wird. CI
+      ausgehende Verbindung auf und wartet darauf, dass ihr etwas erzählt wird. n8n
       schickt eine einzige Nachricht an einen Broker, und alle Lampen reagieren.
       Kein Portforwarding, keine feste Adresse, kein Home Assistant nötig — und es
       ist egal, ob drei oder dreißig Lampen im Umlauf sind.</p>
@@ -112,17 +112,17 @@
     <figure>
       <div class="plate">
         <svg viewBox="0 0 880 430" role="img"
-             aria-label="GitHub Actions publiziert an einen MQTT-Broker; die Lampen im Heimnetz abonnieren ausgehend. Updates holen sie sich per HTTPS von GitHub Pages.">
+             aria-label="n8n empfängt GitHub-Webhooks und publiziert an einen MQTT-Broker; die Lampen im Heimnetz abonnieren ausgehend. Updates holen sie sich per HTTPS von GitHub Pages.">
           <!-- divider -->
           <path d="M520 20 V 410" stroke="var(--line)" stroke-width="1.5" stroke-dasharray="6 5" fill="none"/>
           <text x="508" y="36" class="svg-title" text-anchor="end">unsere Infrastruktur</text>
           <text x="532" y="36" class="svg-title">fremdes Heimnetz</text>
 
-          <!-- GitHub Actions -->
+          <!-- n8n -->
           <rect x="26" y="58" width="180" height="66" rx="6" fill="none" stroke="var(--line)" stroke-width="1.5"/>
-          <text x="42" y="84" class="svg-label" fill="var(--ink)">GitHub Actions</text>
-          <text x="42" y="102" class="svg-note">pr-flash.yml</text>
-          <text x="42" y="116" class="svg-note">im beobachteten Repo</text>
+          <text x="42" y="84" class="svg-label" fill="var(--ink)">n8n</text>
+          <text x="42" y="102" class="svg-note">GitHub-Webhook je Repo</text>
+          <text x="42" y="116" class="svg-note">Filter, Mapping, Publish</text>
 
           <!-- Broker -->
           <rect x="300" y="58" width="180" height="66" rx="6" fill="none" stroke="var(--signal)" stroke-width="1.8"/>
@@ -177,7 +177,7 @@
         </svg>
       </div>
       <figcaption>Jede Verbindung über die Netzgrenze wird von der Lampe aufgebaut.
-        Der Broker ist der einzige Treffpunkt — CI legt dort eine Nachricht ab, die
+        Der Broker ist der einzige Treffpunkt — n8n legt dort eine Nachricht ab, die
         Lampen holen sie sich ab.</figcaption>
     </figure>
   </section>
@@ -303,7 +303,7 @@
           </tr>
           <tr>
             <td><code>nexus-ci</code></td>
-            <td>nur in GitHub-Actions-Secrets</td>
+            <td>nur in der n8n-Instanz</td>
             <td>Ereignisse senden. Kommt nie in eine Firmware.</td>
           </tr>
           <tr>

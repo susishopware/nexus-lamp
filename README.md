@@ -14,7 +14,7 @@ port forwarding, no VPN and no Home Assistant required.
 | [`installer/`](installer/) | Browser installer — flash and provision a lamp in one flow, no software to install |
 | [`installer/architecture.html`](installer/architecture.html) | Illustrated overview: what talks to what, and the reasoning behind it |
 | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Builds the firmware and publishes the installer to GitHub Pages |
-| [`.github/workflows/pr-flash.yml`](.github/workflows/pr-flash.yml) | Copy this into any repository you want the lamps to watch |
+| [`.github/PR_FLASH_TESTLOG.md`](.github/PR_FLASH_TESTLOG.md) | Log of end-to-end checks of the PR-event automation |
 
 ## Set up a lamp
 
@@ -35,8 +35,8 @@ is treated as public:
 - The MQTT credential in the image is **subscribe-only** and restricted to
   `nexus/v1/pr/#`. Extracted from the binary, it lets someone read pull request
   events. It cannot publish, so it cannot fake them.
-- The publish credential lives only in GitHub Actions secrets and never in an
-  image.
+- The publish credential lives only in the n8n instance that turns GitHub
+  events into MQTT messages, and never in an image.
 - The API encryption key and the OTA password are LAN-scoped: using them requires
   already being on the same network as a lamp. For a desk ornament that is an
   accepted risk rather than an overlooked one.
@@ -44,7 +44,18 @@ is treated as public:
 ## Topics
 
 ```
-nexus/v1/pr/<repo>     CI publishes here, never retained
+nexus/v1/pr/<repo>     n8n publishes here, never retained
 nexus/v1/pr/+          every lamp subscribes here
 {"event": "opened"}    opened | merged | closed | success | failure
 ```
+
+## Watching a repository
+
+Pull request events are published by an n8n workflow, not by workflow files in
+the watched repositories: one GitHub trigger node per repository (event
+`pull_request`) feeds a filter (`action` must be one of opened, reopened,
+synchronize, closed), a small mapping step (`closed` + `merged` → `merged`),
+and an MQTT publish node using the publish-only credential — QoS 1 and
+deliberately no retain flag, so a router reboot never replays last week's pull
+request to the whole fleet. Adding a repository means adding one trigger node
+in n8n; the repository itself needs no files, no secrets, and no setup.
