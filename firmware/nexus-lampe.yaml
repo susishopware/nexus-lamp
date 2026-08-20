@@ -35,7 +35,7 @@ substitutions:
 
   # Bump on every shipped image, and keep installer/manifest.json in step —
   # installer/build.sh reads this line to generate it.
-  project_version: "1.1.0"
+  project_version: "1.1.1"
 
   # CI publishes to nexus/v1/pr/<repo>; lamps subscribe to the wildcard, so one
   # publish reaches every lamp and the repo name stays available for later
