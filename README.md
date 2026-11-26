@@ -11,6 +11,7 @@ port forwarding, no VPN and no Home Assistant required.
 | | |
 |---|---|
 | [`firmware/`](firmware/) | ESPHome configuration, wiring notes, commissioning and troubleshooting |
+| [`broker/`](broker/) | Mosquitto configuration and topic permissions for the self-hosted broker |
 | [`installer/`](installer/) | Browser installer — flash and provision a lamp in one flow, no software to install |
 | [`installer/architecture.html`](installer/architecture.html) | Illustrated overview: what talks to what, and the reasoning behind it |
 | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Builds the firmware and publishes the installer to GitHub Pages |

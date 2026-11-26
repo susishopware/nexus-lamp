@@ -35,7 +35,7 @@ substitutions:
 
   # Bump on every shipped image, and keep installer/manifest.json in step —
   # installer/build.sh reads this line to generate it.
-  project_version: "1.1.1"
+  project_version: "1.2.0"
 
   # CI publishes to nexus/v1/pr/<repo>; lamps subscribe to the wildcard, so one
   # publish reaches every lamp and the repo name stays available for later
@@ -51,7 +51,7 @@ substitutions:
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
-  min_version: 2025.5.0
+  min_version: 2026.11.0
   # Every lamp gets a unique hostname, nexus-lampe-<mac suffix>. Without this, two
   # lamps on the same network fight over the same mDNS name.
   name_add_mac_suffix: true
@@ -177,12 +177,23 @@ api:
 # an outbound TLS connection to a broker and subscribes to one broadcast topic.
 # CI publishes once, every lamp reacts. No port forwarding, no Home Assistant
 # required, and it scales to as many lamps as we hand out.
+#
+# The broker is a self-hosted Mosquitto behind a Cloudflare Tunnel. Cloudflare
+# only passes raw TCP on Enterprise plans, but it passes WebSockets everywhere,
+# so the lamp speaks MQTT over WSS on 443 and the tunnel hands it to Mosquitto's
+# websocket listener. Nothing at home is exposed to the internet.
+#
+# No pinned CA: Cloudflare issues its edge certificates from more than one CA
+# (Let's Encrypt, Google Trust Services, SSL.com) and may switch between them.
+# The ESP-IDF certificate bundle covers all of them; a pin would break the
+# fleet the day Cloudflare rotates.
 mqtt:
   broker: !secret mqtt_broker
-  port: 8883
+  port: 443
+  transport: wss
+  ws_path: /mqtt
   username: !secret mqtt_username
   password: !secret mqtt_password
-  certificate_authority: !secret mqtt_ca_cert
 
   # We only ever listen. A null prefix suppresses the per-entity state and
   # command topics, and with them the birth, will, shutdown and log topics — so
@@ -284,7 +295,7 @@ light:
     pin: ${led_pin}
     num_leds: ${num_leds}
     chipset: WS2812
-    rgb_order: GRB
+    channel_colors: GRB
     # A USB lamp has no switch, so plugging it in has to mean light. Restores
     # whatever state its owner left it in, and falls back to on when there is
     # nothing saved yet.
@@ -393,7 +404,7 @@ script:
           id(pr_flash)->execute(r, g, b, ${flash_default_ms}, blinks);
 
   # Runs at every power-on: red, green, blue, then off. Confirms in ~1.2 s that
-  # the data line works and that rgb_order is right — red first, green second.
+  # the data line works and that channel_colors is right — red first, green second.
   - id: boot_greeting
     mode: single
     then:

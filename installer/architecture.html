@@ -126,8 +126,8 @@
 
           <!-- Broker -->
           <rect x="300" y="58" width="180" height="66" rx="6" fill="none" stroke="var(--signal)" stroke-width="1.8"/>
-          <text x="316" y="84" class="svg-label" fill="var(--signal)">HiveMQ Cloud</text>
-          <text x="316" y="102" class="svg-note">MQTT über TLS, Port 8883</text>
+          <text x="316" y="84" class="svg-label" fill="var(--signal)">Mosquitto</text>
+          <text x="316" y="102" class="svg-note">MQTT über WSS, Port 443</text>
           <text x="316" y="116" class="svg-note">nexus/v1/pr/…</text>
 
           <!-- Pages -->
@@ -317,8 +317,8 @@
     <div class="flag">
       <span class="mark">geprüft</span>
       <p>Die Trennung ist nicht bloß konfiguriert, sondern nachgewiesen: ein
-        Publish-Versuch mit dem Lampen-Zugang wird vom Broker mit dem Schließen der
-        Verbindung beantwortet. Die Gegenprobe gehört zur Inbetriebnahme.</p>
+        Publish-Versuch mit dem Lampen-Zugang wird vom Broker verworfen und erreicht
+        keine Lampe. Die Gegenprobe gehört zur Inbetriebnahme.</p>
     </div>
   </section>
 
@@ -370,16 +370,16 @@
           gesehen haben.</dd>
       </div>
       <div>
-        <dt>zwei Wurzelzertifikate im CA-File</dt>
-        <dd>Let's Encrypt ist auf eine neue Wurzel umgestiegen und liefert sie derzeit
-          von ISRG Root X1 quersigniert aus. Beide sind hinterlegt, damit die Lampen
-          den Broker auch dann noch erreichen, wenn die Quersignatur wegfällt.</dd>
+        <dt>keine fest hinterlegte Zertifizierungsstelle</dt>
+        <dd>Cloudflare stellt seine Zertifikate von mehreren Zertifizierungsstellen aus
+          und kann zwischen ihnen wechseln. Die Lampe prüft den Broker deshalb gegen die
+          eingebaute Zertifikatsliste von ESP-IDF, genau wie bei den Updates von GitHub Pages.</dd>
       </div>
     </dl>
   </section>
 
   <footer>
-    Firmware mit ESPHome, Broker HiveMQ Cloud, Auslieferung über GitHub Pages.
+    Firmware mit ESPHome, Broker Mosquitto hinter einem Cloudflare Tunnel, Auslieferung über GitHub Pages.
     Verdrahtung, Inbetriebnahme und Fehlersuche stehen in
     <code>firmware/README.md</code> im Repository.
   </footer>
