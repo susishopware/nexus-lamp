@@ -29,9 +29,15 @@ substitutions:
   # if someone drags the brightness slider to 100 % on pure white.
   current_cap: "45%"
 
-  # Flash duration and how long the fade back to the previous state takes.
+  # Flash duration, the fade in and out of each blink, and how long the fade
+  # back to the previous state takes.
   flash_default_ms: "1500"
-  restore_transition: 400ms
+  flash_fade_ms: "300"
+  restore_transition: 800ms
+  # The "Release" effect: length of one cycle (its phase timings assume 12 s)
+  # and how many cycles a release gets.
+  release_cycle_ms: "12000"
+  release_cycles: "3"
 
   # Bump on every shipped image, and keep installer/manifest.json in step —
   # installer/build.sh reads this line to generate it.
@@ -313,6 +319,64 @@ light:
           name: "Rainbow"
       - addressable_scan:
           name: "Scan"
+      # The release show, run by pr_release: gold spreads from the crossing into
+      # all four corners, a few sparks, then slow rainbow rings drift outwards.
+      # One cycle is ${release_cycle_ms} ms; pr_release runs ${release_cycles} of them,
+      # each fading in from where the last one ended.
+      #
+      # Each half of the X is an arc of n/2 LEDs from one corner through the
+      # crossing to the other, so the arc's middle LED sits in the crossing.
+      # The show works on the distance from there (the "ring"), which makes it
+      # symmetric and independent of which way round the arcs are wired.
+      - addressable_lambda:
+          name: "Release"
+          update_interval: 30ms
+          lambda: |-
+            static uint32_t start = 0, cycle = 0;
+            // What each LED showed when the current cycle began.
+            static Color from[64];
+            // Sparkle level per LED, 1 when it flashes, decaying to 0 in ~1 s.
+            static float spark[64] = {};
+            const int n = it.size();
+            if (initial_run) {
+              start = millis();
+              cycle = 0;
+              // Start from whatever the X shows, so the show fades in from it.
+              for (int i = 0; i < n; i++) from[i] = it[i].get();
+              for (auto &s : spark) s = 0;
+            }
+            const uint32_t now = millis() - start;
+            if (now / ${release_cycle_ms} != cycle) {
+              cycle = now / ${release_cycle_ms};
+              for (int i = 0; i < n; i++) from[i] = it[i].get();
+            }
+            const uint32_t t = now % ${release_cycle_ms};
+
+            const int half = n / 2, mid = half / 2;
+            auto ring = [&](int i) { return abs(i % half - mid); };
+            auto mix = [](Color a, Color b, float f) {
+              f = clamp(f, 0.0f, 1.0f);
+              return Color(a.r + (b.r - a.r) * f, a.g + (b.g - a.g) * f, a.b + (b.b - a.b) * f);
+            };
+            const Color gold(255, 170, 0);
+
+            // 0 - 3 s: gold fades in ring by ring, from the crossing outwards.
+            // 3 - 6.5 s: it settles into a dim glow, a few LEDs flash white.
+            // 6.5 - 12 s: the glow slowly turns into rainbow rings drifting outwards.
+            for (int i = 0; i < n; i++) {
+              const int r = ring(i);
+              if (t < 3000) {
+                it[i] = mix(from[i], gold, (t - r * 800.0f) / 1400.0f);
+                continue;
+              }
+              spark[i] *= 0.93f;
+              const Color glow = mix(gold, mix(Color::BLACK, gold, 0.35f), (t - 3000) / 900.0f);
+              const Color base = t < 6500 ? glow
+                  : mix(glow, ESPHSVColor(uint8_t(now / 25 - r * 30), 255, 255).to_rgb(), (t - 6500) / 1800.0f);
+              it[i] = mix(base, Color::WHITE, spark[i]);
+            }
+            if (t >= 3000 && t < 6500 && random_uint32() % 15 == 0)
+              spark[random_uint32() % n] = 1.0f;
 
 # --- Scripts ---------------------------------------------------------------
 
@@ -327,19 +391,10 @@ script:
       duration: int
       blinks: int
     then:
-      - if:
-          condition:
-            lambda: "return !id(flash_active);"
-          then:
-            - lambda: |-
-                // Remember the state we have to come back to.
-                auto v = id(nexus_x)->remote_values;
-                id(saved_on) = v.is_on();
-                id(saved_brightness) = v.get_brightness();
-                id(saved_red) = v.get_red();
-                id(saved_green) = v.get_green();
-                id(saved_blue) = v.get_blue();
-                id(flash_active) = true;
+      - script.stop: pr_release
+      - script.execute: pr_remember
+      # A colour alone does not stop a running effect; it would keep drawing.
+      - light.turn_on: {id: nexus_x, effect: "None"}
       - repeat:
           count: !lambda "return blinks < 1 ? 1 : blinks;"
           then:
@@ -349,7 +404,7 @@ script:
                 red: !lambda "return red;"
                 green: !lambda "return green;"
                 blue: !lambda "return blue;"
-                transition_length: 0s
+                transition_length: ${flash_fade_ms}ms
             - delay: !lambda "return duration;"
             - if:
                 condition:
@@ -357,9 +412,40 @@ script:
                 then:
                   - light.turn_off:
                       id: nexus_x
-                      transition_length: 0s
-                  - delay: 150ms
+                      transition_length: ${flash_fade_ms}ms
+                  # The fade out, then a short dark pause before the next blink.
+                  - delay: !lambda "return ${flash_fade_ms} + 200;"
       - script.execute: pr_restore
+
+  # Same contract as pr_flash, but runs the "Release" effect instead of blinks.
+  - id: pr_release
+    mode: restart
+    then:
+      - script.stop: pr_flash
+      - script.execute: pr_remember
+      - light.turn_on:
+          id: nexus_x
+          brightness: 100%
+          effect: "Release"
+      - delay: !lambda "return ${release_cycles} * ${release_cycle_ms};"
+      - script.execute: pr_restore
+
+  # Remember the state we have to come back to, unless a flash is already
+  # running: then the saved state is still the one from before that flash.
+  - id: pr_remember
+    then:
+      - if:
+          condition:
+            lambda: "return !id(flash_active);"
+          then:
+            - lambda: |-
+                auto v = id(nexus_x)->remote_values;
+                id(saved_on) = v.is_on();
+                id(saved_brightness) = v.get_brightness();
+                id(saved_red) = v.get_red();
+                id(saved_green) = v.get_green();
+                id(saved_blue) = v.get_blue();
+                id(flash_active) = true;
 
   - id: pr_restore
     then:
@@ -367,6 +453,8 @@ script:
           condition:
             lambda: "return id(saved_on);"
           then:
+            # Separate call: an effect change cannot carry a transition.
+            - light.turn_on: {id: nexus_x, effect: "None"}
             - light.turn_on:
                 id: nexus_x
                 brightness: !lambda "return id(saved_brightness);"
@@ -387,17 +475,29 @@ script:
       event: string
     then:
       - lambda: |-
+          if (event == "release") {
+            ESP_LOGI("pr_event", "event=release -> show");
+            id(pr_release)->execute();
+            return;
+          }
           // r, g, b as 0..1 ratios; brightness is applied separately.
-          float r = 0.0f, g = 0.47f, b = 0.75f;   // shopware blue #0078BF
+          float r, g, b;
           int blinks = 2;
-          if (event == "merged") {                // GitHub purple #8250DF
+          if (event == "opened") {                 // shopware blue #0078BF
+            r = 0.00f; g = 0.47f; b = 0.75f;
+          } else if (event == "merged") {          // GitHub purple #8250DF
             r = 0.51f; g = 0.31f; b = 0.87f; blinks = 3;
+          } else if (event == "closed") {          // red, as GitHub shows a PR closed unmerged
+            r = 0.82f; g = 0.14f; b = 0.18f;
           } else if (event == "failure") {         // red #D1242F
             r = 0.82f; g = 0.14f; b = 0.18f; blinks = 4;
           } else if (event == "success") {         // green #1A7F37
-            r = 0.10f; g = 0.50f; b = 0.22f; blinks = 2;
-          } else if (event == "closed") {          // grey, PR closed unmerged
-            r = 0.40f; g = 0.40f; b = 0.40f; blinks = 2;
+            r = 0.10f; g = 0.50f; b = 0.22f;
+          } else {
+            // Ignore what this version does not know, so the publisher can add
+            // events before every lamp has the update.
+            ESP_LOGW("pr_event", "event=%s unknown, ignored", event.c_str());
+            return;
           }
           ESP_LOGI("pr_event", "event=%s -> rgb(%.2f, %.2f, %.2f) x%d",
                    event.c_str(), r, g, b, blinks);

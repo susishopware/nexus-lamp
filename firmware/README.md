@@ -197,7 +197,7 @@ broker configuration, topic permissions included, lives in [`../broker/`](../bro
 
 Fill in `mqtt_broker`, `mqtt_username` and `mqtt_password` in `secrets.yaml`:
 that is the subscribe-only credential baked into the image. The publish-only credential is configured once in the n8n workflow that
-turns GitHub `pull_request` webhooks into MQTT messages (see the root README,
+turns GitHub `pull_request` and `release` webhooks into MQTT messages (see the root README,
 "Watching a repository"); the watched repositories themselves need no files
 and no secrets.
 
@@ -225,7 +225,7 @@ is still there and gets discovered automatically:
 ```yaml
 action: esphome.nexus_lampe_pr_event    # name carries the MAC suffix per lamp
 data:
-  event: opened      # opened | merged | closed | success | failure
+  event: opened      # opened | merged | closed | release | success | failure
 ```
 
 For full control there is also `..._pr_flash_rgb` with `red`, `green`, `blue`
@@ -246,12 +246,24 @@ Colour map, defined in the `pr_event` script:
 | `merged` | purple `#8250DF` | 3 |
 | `failure` | red `#D1242F` | 4 |
 | `success` | green `#1A7F37` | 2 |
-| `closed` | grey | 2 |
+| `closed` | red `#D1242F`, as GitHub shows a PR closed unmerged | 2 |
+| `release` | the release show, see below | 3 cycles of 12 s |
+
+Anything else is logged and ignored, so the publisher can add events before
+every lamp knows them. Each blink fades in and out over `flash_fade_ms`.
 
 The flash saves the light's previous state (on/off, brightness, colour) and
 fades back into it afterwards. A second trigger arriving mid-flash restarts the
 flash but keeps the originally saved state, so repeated PRs cannot leave the
 lamp stuck on a status colour.
+
+**The release show** is the `Release` light effect. Each half of the X is an
+arc of five LEDs from one corner through the crossing to the other, so the
+effect works on the distance from the crossing: gold spreads from the middle
+into all four corners, settles into a dim glow with a few white sparks, then
+turns into rainbow rings drifting outwards. One cycle takes `release_cycle_ms`,
+a release gets `release_cycles` of them, each fading in from where the last one
+ended. Any other event arriving during the show ends it and takes over.
 
 ## What the lamp does on its own
 
