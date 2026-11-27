@@ -5,6 +5,17 @@
 # lamp over USB (ESP Web Tools reads builds[].parts), and lamps already on
 # someone's desk checking for updates (the update platform reads builds[].ota).
 #
+# Lamps install updates on their own, so a release goes out in two stages:
+#
+#   1. deploy-beta   the new build goes to beta/manifest.json only. The root
+#                    manifest keeps serving the current release, copied over
+#                    from the live site. The test lamp (switch "Testkanal für
+#                    Updates") installs it within the hour.
+#   2. deploy-fleet  waits for approval on the "flotte" environment, then puts
+#                    the same build at the root, where every lamp finds it.
+#
+# Approve only once the test lamp runs the new version and still blinks.
+#
 # Repository secrets required:
 #   API_ENCRYPTION_KEY  OTA_PASSWORD  WEB_PASSWORD
 #   MQTT_BROKER  MQTT_USERNAME  MQTT_PASSWORD   ← the SUBSCRIBE-ONLY credential
@@ -26,7 +37,8 @@ permissions:
   id-token: write
 
 # Pages allows one deployment at a time, and a half-finished rollout is worse
-# than a late one — so queue rather than cancel.
+# than a late one, so queue rather than cancel. A run waiting for approval
+# holds the queue; reject it to let the next one through.
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -87,16 +99,88 @@ jobs:
           print("manifest ok:", m["name"], m["version"], b["ota"]["md5"])
           PY
 
+      # The build on its own, for deploy-fleet to publish once approved.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            installer/manifest.json
+            installer/nexus-lampe.factory.bin
+            installer/nexus-lampe.ota.bin
+
+      # Stage 1: the new build under beta/, the live release kept at the root.
+      - name: Assemble site for the test channel
+        run: |
+          site=_site
+          mkdir -p "$site/beta"
+          cp -r installer/. "$site/"
+          cp installer/manifest.json installer/nexus-lampe.*.bin "$site/beta/"
+          live=https://susishopware.github.io/nexus-lamp
+          curl -fsS "$live/manifest.json" -o "$site/manifest.json"
+          python - "$site/manifest.json" <<'PY' | while read -r f; do curl -fsS "$live/$f" -o "$site/$f"; done
+          import json, sys
+          b = json.load(open(sys.argv[1]))["builds"][0]
+          print(b["ota"]["path"])
+          for part in b["parts"]:
+              print(part["path"])
+          PY
+          echo "root stays at $(python -c 'import json; print(json.load(open("_site/manifest.json"))["version"])')"
+          echo "beta gets $(python -c 'import json; print(json.load(open("_site/beta/manifest.json"))["version"])')"
+
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: installer
+          name: beta-site
+          path: _site
 
-  deploy:
+  deploy-beta:
     needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}beta/manifest.json
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: beta-site
+
+  # Stage 2 gate. The "flotte" environment has a required reviewer, so the run
+  # stops here until someone approves it in the Actions tab.
+  approve-fleet:
+    needs: deploy-beta
+    runs-on: ubuntu-latest
+    environment: flotte
+    steps:
+      - run: echo "approved for every lamp"
+
+  deploy-fleet:
+    needs: approve-fleet
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: build
+
+      - name: Assemble site for every lamp
+        run: |
+          site=_site
+          mkdir -p "$site/beta"
+          cp -r installer/. "$site/"
+          cp build/* "$site/"
+          cp build/* "$site/beta/"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          name: fleet-site
+          path: _site
+
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: fleet-site

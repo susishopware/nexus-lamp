@@ -125,6 +125,14 @@ From here on, updates go over the air — no cable:
 .venv/bin/esphome logs firmware/nexus-lampe.yaml
 ```
 
+Lamps in the field update themselves from GitHub Pages; see "Updates" in the
+root README. The knobs are substitutions at the top of `nexus-lampe.yaml`:
+`update_hour`, `update_after_power_on_min` and `rollback_after`. For a test of
+the update path without publishing anything, point the channels at a local
+web server on the command line, for example
+`-s update_beta_manifest_url http://<mac ip>:8765/beta/manifest.json`, and
+serve a manifest in the format `installer/build.sh` writes.
+
 ### Step 2 — LED test with 3 pixels, still not soldered into the print
 
 Cut a short piece of strip and hook it up with jumper wires. Three pixels draw

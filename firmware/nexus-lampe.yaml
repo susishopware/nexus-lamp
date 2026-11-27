@@ -41,7 +41,7 @@ substitutions:
 
   # Bump on every shipped image, and keep installer/manifest.json in step —
   # installer/build.sh reads this line to generate it.
-  project_version: "1.2.0"
+  project_version: "1.3.0"
 
   # CI publishes to nexus/v1/pr/<repo>; lamps subscribe to the wildcard, so one
   # publish reaches every lamp and the repo name stays available for later
@@ -53,6 +53,18 @@ substitutions:
   # If it ever has to move, leave a redirect here: http_request follows up to
   # three of them, so lamps in the field come along.
   update_manifest_url: "https://susishopware.github.io/nexus-lamp/manifest.json"
+  # Every release lands here first. Only lamps with the test channel switched on
+  # read it; the release pipeline promotes it to the URL above on approval.
+  update_beta_manifest_url: "https://susishopware.github.io/nexus-lamp/beta/manifest.json"
+
+  # Lamps install updates on their own: at this hour (local time) if they are
+  # on at night, otherwise right after the next power-on.
+  update_hour: "3"
+  # Minutes after power-on in which a found update is installed straight away.
+  update_after_power_on_min: "15"
+  # How long a freshly installed image gets to reach the broker before the lamp
+  # rolls back to the previous one.
+  rollback_after: 10min
 
 esphome:
   name: ${name}
@@ -94,6 +106,8 @@ esphome:
             # Never provisioned: pulse for a while so it is obvious the thing is
             # alive and waiting to be set up, then settle into being a lamp.
             - script.execute: setup_beacon
+      - script.execute: apply_update_channel
+      - script.execute: rollback_guard
 
 esp32:
   board: esp32dev
@@ -138,6 +152,10 @@ wifi:
           - lambda: "id(ever_connected) = true;"
           - script.stop: setup_beacon
           - script.execute: connected_ok
+    # The update check at boot ran before there was a network. Ask again now,
+    # so a lamp that was off at night installs right after being switched on.
+    - delay: 5s
+    - script.execute: check_and_install
 
 # Serves the WiFi setup form on the hotspot above.
 captive_portal:
@@ -224,6 +242,11 @@ mqtt:
   # up MQTT still gets a perfectly working lamp; it just does not blink for PRs.
   reboot_timeout: 0s
 
+  # Reaching the broker is what makes a freshly installed image good: from here
+  # on the bootloader no longer rolls back to the previous one.
+  on_connect:
+    - safe_mode.mark_successful
+
   on_json_message:
     - topic: ${mqtt_pr_topic}
       then:
@@ -250,8 +273,62 @@ update:
   - platform: http_request
     name: "Firmware"
     id: firmware_update
+    # The real source is set at boot by apply_update_channel: this one, or the
+    # test channel if the "Testkanal für Updates" switch is on.
     source: ${update_manifest_url}
     update_interval: 6h
+    on_update_available:
+      - script.execute: auto_install
+
+# Night-time install needs the wall clock.
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    on_time:
+      - hours: ${update_hour}
+        minutes: 0
+        seconds: 0
+        then:
+          - script.execute: check_and_install
+
+# The test lamp should not wait six hours for a release.
+interval:
+  - interval: 1h
+    then:
+      - if:
+          condition:
+            switch.is_on: beta_channel
+          then:
+            - script.execute: check_and_install
+
+# Rollback for updates that cannot reach the broker. After an OTA the new image
+# boots as "pending verify"; it only becomes the image of record once
+# safe_mode.mark_successful runs, which the MQTT on_connect does. If the lamp
+# reboots before that, the bootloader goes back to the previous image, and
+# rollback_guard makes sure it reboots. boot_is_good_after is only the fallback
+# for a lamp whose broker is gone for good, and has to stay longer than
+# ${rollback_after}.
+safe_mode:
+  boot_is_good_after: 30min
+  # The default (true) declares the image good on any clean reboot, including
+  # the one rollback_guard does to roll back. Off, so only the broker decides.
+  boot_is_good_on_shutdown: false
+
+switch:
+  # Only for the test lamp: follow the test channel, which gets every release
+  # before the rest of the fleet, and install from it straight away.
+  - platform: template
+    name: "Testkanal für Updates"
+    id: beta_channel
+    icon: mdi:flask-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - script.execute: apply_update_channel
+    on_turn_off:
+      - script.execute: apply_update_channel
 
 # Trigger path B (optional): reachable only from inside the LAN, lets a
 # self-hosted runner POST straight at the lamp. Also handy as a manual UI.
@@ -273,6 +350,13 @@ globals:
     type: bool
     restore_value: true
     initial_value: "false"
+
+  # Hash of the version that last had to be rolled back, so auto_install does
+  # not try it again. Shared by both images: same id, same preference slot.
+  - id: failed_update
+    type: uint32_t
+    restore_value: true
+    initial_value: "0"
 
   # True while a flash is in flight, so a second trigger does not save the
   # flash colour as the "previous" state to restore to.
@@ -592,6 +676,89 @@ script:
       - light.turn_on: {id: nexus_x, brightness: 100%, red: 100%, green: 100%, blue: 100%, transition_length: 0s}
       - delay: 1200ms
       - light.turn_off: {id: nexus_x, transition_length: 0s}
+
+  # --- Updates ---
+
+  # Points the update entity at the channel the switch asks for, then checks.
+  - id: apply_update_channel
+    mode: restart
+    then:
+      - lambda: |-
+          const char *url = id(beta_channel).state ? "${update_beta_manifest_url}"
+                                                   : "${update_manifest_url}";
+          ESP_LOGI("update", "channel: %s", url);
+          id(firmware_update)->set_source_url(url);
+      - script.execute: check_and_install
+
+  # Installs a pending update if now is a good time: always on the test
+  # channel, otherwise in the night hour or soon after power-on (the
+  # lamp was off at night, and somebody just plugged it in anyway). Only ever
+  # moves forward, and never retries a version that had to be rolled back.
+  - id: auto_install
+    mode: single
+    then:
+      - lambda: |-
+          if (id(firmware_update)->state != update::UPDATE_STATE_AVAILABLE)
+            return;
+          const std::string &latest = id(firmware_update)->update_info.latest_version;
+          auto parse = [](const std::string &v) {
+            std::array<int, 3> p{0, 0, 0};
+            sscanf(v.c_str(), "%d.%d.%d", &p[0], &p[1], &p[2]);
+            return p;
+          };
+          if (parse(latest) <= parse(ESPHOME_PROJECT_VERSION)) {
+            ESP_LOGI("update", "%s is not newer than %s, not installing", latest.c_str(), ESPHOME_PROJECT_VERSION);
+            return;
+          }
+          if (fnv1_hash(latest) == id(failed_update)) {
+            ESP_LOGW("update", "%s was rolled back before, not installing it again", latest.c_str());
+            return;
+          }
+          const auto now = id(sntp_time).now();
+          const bool night = now.is_valid() && now.hour == ${update_hour};
+          const bool fresh = millis() < ${update_after_power_on_min} * 60 * 1000;
+          const bool beta = id(beta_channel).state;
+          if (!(beta || night || fresh)) {
+            ESP_LOGI("update", "%s available, waiting for %s:00", latest.c_str(), "${update_hour}");
+            return;
+          }
+          ESP_LOGW("update", "installing %s (%s)", latest.c_str(),
+                   beta ? "test channel" : night ? "night" : "after power-on");
+          id(firmware_update)->perform(false);
+
+  # Check, give the manifest download half a minute, then let auto_install
+  # decide. on_update_available alone is not enough: it only fires when the
+  # state changes, so an update found in the afternoon, or a newer one arriving
+  # while an older one is still pending, would never trigger it again.
+  - id: check_and_install
+    # restart: a newer request (say, the channel just changed) replaces a
+    # check still waiting for its manifest.
+    mode: restart
+    then:
+      - component.update: firmware_update
+      - delay: 30s
+      - script.execute: auto_install
+
+  # After an update the new image has ${rollback_after} to reach the broker.
+  # If it does not, reboot while it is still unconfirmed, and the bootloader
+  # starts the previous image again.
+  - id: rollback_guard
+    mode: single
+    then:
+      - delay: ${rollback_after}
+      - if:
+          condition:
+            lambda: |-
+              esp_ota_img_states_t state;
+              return esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
+                     state == ESP_OTA_IMG_PENDING_VERIFY;
+          then:
+            - logger.log:
+                level: WARN
+                format: "New firmware did not reach the broker, rolling back"
+            - lambda: |-
+                id(failed_update) = fnv1_hash(ESPHOME_PROJECT_VERSION);
+                App.safe_reboot();
 
 # --- Buttons ---------------------------------------------------------------
 
