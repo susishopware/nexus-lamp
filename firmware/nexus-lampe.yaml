@@ -150,6 +150,9 @@ improv_serial:
 api:
   encryption:
     key: !secret api_encryption_key
+  # Most lamps never see Home Assistant. The default (15 min) would reboot them
+  # four times an hour, each time with the red, green, blue boot greeting.
+  reboot_timeout: 0s
   actions:
     # Trigger path A (recommended): Home Assistant calls
     #   action: esphome.nexus_lampe_pr_event   data: {event: "opened"}
