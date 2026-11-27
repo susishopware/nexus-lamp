@@ -27,6 +27,30 @@ What you should see: red, green, blue at power-on, then slow blue breathing whil
 it waits to be set up, then green once your password works, then white. From
 there it is a lamp — and if you never connect it at all, it is still a lamp.
 
+## Updates
+
+From 1.3.0 on, lamps install new firmware on their own. They check the
+manifest on GitHub Pages every six hours, at power-on and at 03:00, and install
+a newer version at 03:00 or, if they were off at night, within 15 minutes of
+being switched on. They only ever move to a higher version.
+
+A new image has 10 minutes after its first boot to reach the broker. If it does
+not, the lamp reboots and the bootloader starts the previous image again; the
+failed version is remembered and not tried a second time. This works on every
+lamp, including those first flashed with 1.0.
+
+Releasing therefore goes in two stages, both in
+[`release.yml`](.github/workflows/release.yml):
+
+1. Push a tag `v<project_version>`. The build lands in the **test channel**
+   (`beta/manifest.json`) only; every other lamp keeps seeing the previous
+   release. A lamp with the switch **Testkanal für Updates** turned on
+   (Home Assistant, config section) checks it hourly and installs straight away.
+2. Once the test lamp runs the new version and still blinks for pull requests,
+   approve the waiting `approve-fleet` job in the Actions tab (environment
+   `flotte`). The build then goes to the root manifest and reaches every lamp
+   within a day.
+
 ## Security posture
 
 The firmware image is published so that lamps in other people's homes can fetch
