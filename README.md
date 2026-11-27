@@ -11,6 +11,7 @@ port forwarding, no VPN and no Home Assistant required.
 | | |
 |---|---|
 | [`firmware/`](firmware/) | ESPHome configuration, wiring notes, commissioning and troubleshooting |
+| [`broker/`](broker/) | Mosquitto configuration and topic permissions for the self-hosted broker |
 | [`installer/`](installer/) | Browser installer — flash and provision a lamp in one flow, no software to install |
 | [`installer/architecture.html`](installer/architecture.html) | Illustrated overview: what talks to what, and the reasoning behind it |
 | [`.github/workflows/release.yml`](.github/workflows/release.yml) | Builds the firmware and publishes the installer to GitHub Pages |
@@ -46,15 +47,20 @@ is treated as public:
 ```
 nexus/v1/pr/<repo>     n8n publishes here, never retained
 nexus/v1/pr/+          every lamp subscribes here
-{"event": "opened"}    opened | merged | closed | success | failure
+{"event": "opened"}    opened | merged | closed | release | success | failure
 ```
+
+Lamps ignore any other event, so the publisher can add new ones before every
+lamp has the firmware that knows them (from 1.2.0 on; older lamps show unknown
+events as `opened`).
 
 ## Watching a repository
 
 Pull request events are published by an n8n workflow, not by workflow files in
-the watched repositories: one GitHub trigger node per repository (event
-`pull_request`) feeds a filter (`action` must be one of opened, reopened,
-synchronize, closed), a small mapping step (`closed` + `merged` → `merged`),
+the watched repositories: one GitHub trigger node per repository (events
+`pull_request` and `release`) feeds a filter (`action` must be one of opened,
+reopened, synchronize, closed, published), a small mapping step (`closed` +
+`merged` → `merged`, a published release → `release`),
 and an MQTT publish node using the publish-only credential — QoS 1 and
 deliberately no retain flag, so a router reboot never replays last week's pull
 request to the whole fleet. Adding a repository means adding one trigger node

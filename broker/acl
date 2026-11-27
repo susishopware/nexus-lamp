@@ -1,0 +1,12 @@
+# Goes to /etc/mosquitto/acl on the broker container.
+#
+# nexus-lamp is baked into every published firmware image and therefore public.
+# It may only read. Mosquitto drops a forbidden publish silently instead of
+# closing the connection, but the firmware sends none anyway (discover_ip off).
+user nexus-lamp
+topic read nexus/v1/pr/#
+
+# Publishes PR events. Lives in n8n and in your password manager, never in the
+# firmware or this repository.
+user nexus-publisher
+topic write nexus/v1/pr/#

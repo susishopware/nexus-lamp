@@ -42,7 +42,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install ESPHome
-        run: pip install --quiet esphome
+        run: pip install --quiet esphome==2026.11.0
 
       # A lamp decides whether an update exists by comparing version strings, so
       # a tag that disagrees with project_version would ship an image the fleet

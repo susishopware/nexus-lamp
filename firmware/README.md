@@ -73,7 +73,7 @@ Only needed by whoever maintains the firmware, not by recipients.
 git clone https://github.com/susishopware/nexus-lamp.git
 cd nexus-lamp
 python3 -m venv .venv
-.venv/bin/pip install esphome
+.venv/bin/pip install esphome==2026.11.0   # same as CI; transport: wss needs 2026.11
 ```
 
 Then generate `firmware/secrets.yaml`. Do not hand-write it — the same script
@@ -83,15 +83,14 @@ runs in CI, and having one source keeps the two from drifting:
 export API_ENCRYPTION_KEY=...   # openssl rand -base64 32
 export OTA_PASSWORD=...         # openssl rand -hex 16
 export WEB_PASSWORD=...
-export MQTT_BROKER=...          # HiveMQ cluster hostname, no scheme, no port
+export MQTT_BROKER=mqtt.simonwewers.de  # broker hostname, no scheme, no port
 export MQTT_USERNAME=nexus-lamp # the SUBSCRIBE-ONLY credential
 export MQTT_PASSWORD=...
 firmware/make-secrets.sh
 ```
 
 No WiFi credentials anywhere: those are provisioned per device. The file is
-gitignored; `secrets.yaml.example` is the template that is committed, and
-`mqtt_ca.pem` holds the public root certificates the script injects.
+gitignored; `secrets.yaml.example` is the template that is committed.
 
 ## Commissioning
 
@@ -145,7 +144,7 @@ Press the **LED self test** button (Home Assistant, or the device's web page at
 `http://<ip>`). Expected sequence: **red → green → blue → white**, about 1.2 s
 each, then off.
 
-- Red and green swapped → change `rgb_order: GRB` to `RGB`
+- Red and green swapped → change `channel_colors: GRB` to `RGB`
 - First pixel wrong colour or flickering → data level problem, see
   troubleshooting
 - Nothing at all → check that ESP32 and strip share a GND, and that the arrow
@@ -186,31 +185,34 @@ once and every lamp reacts — no port forwarding, no Home Assistant needed, and
 it scales to however many lamps we hand out.
 
 ```
-GitHub webhook  -->  n8n  --publish-->  broker (8883, TLS)  <--subscribe--  lamp, lamp, lamp
+GitHub webhook --> n8n --publish--> Mosquitto <--tunnel-- Cloudflare <--subscribe, wss:443-- lamp, lamp, lamp
 ```
 
-Fill in `mqtt_broker`, `mqtt_username` and `mqtt_password` in `secrets.yaml`
-(currently `CHANGEME`) — that is the subscribe-only credential baked into the
-image. The publish-only credential is configured once in the n8n workflow that
-turns GitHub `pull_request` webhooks into MQTT messages (see the root README,
+The broker is Mosquitto in a container on a home server. From the outside it is
+reachable only through a Cloudflare Tunnel at `mqtt.simonwewers.de`. Cloudflare
+passes raw TCP only on Enterprise plans but WebSockets on every plan, so the
+lamps speak MQTT over WSS on port 443 (`transport: wss`, path `/mqtt`) and the
+tunnel hands the connection to Mosquitto's websocket listener on port 9001. The
+broker configuration, topic permissions included, lives in [`../broker/`](../broker/).
+
+Fill in `mqtt_broker`, `mqtt_username` and `mqtt_password` in `secrets.yaml`:
+that is the subscribe-only credential baked into the image. The publish-only credential is configured once in the n8n workflow that
+turns GitHub `pull_request` and `release` webhooks into MQTT messages (see the root README,
 "Watching a repository"); the watched repositories themselves need no files
 and no secrets.
 
-Test the whole chain by hand (with the publish credential):
+Test the whole chain by hand from the home LAN, with the publish credential.
+`mosquitto_pub` cannot speak WebSockets, so it goes to the plain listener:
 
 ```bash
-mosquitto_pub -h "$MQTT_HOST" -p 8883 --capath /etc/ssl/certs \
-  -u "$MQTT_USER" -P "$MQTT_PASS" \
+mosquitto_pub -h 192.168.0.12 -p 1883 \
+  -u nexus-publisher -P "$MQTT_PASS" \
   -t nexus/v1/pr/manual-test -m '{"event":"merged"}'
 ```
 
-`mqtt_ca_cert` in `secrets.yaml` holds ISRG Root X1, which covers brokers whose
-chain ends at Let's Encrypt (HiveMQ Cloud and EMQX Cloud among them). For
-anything else, fetch the root and replace it:
-
-```bash
-openssl s_client -showcerts -connect "$MQTT_HOST:8883" </dev/null
-```
+There is no pinned CA. Cloudflare issues its edge certificates from more than
+one CA and may switch between them, so the lamp checks the broker against the
+ESP-IDF certificate bundle, the same way it checks GitHub Pages for updates.
 
 MQTT never blocks anything: `reboot_timeout: 0s` means an unreachable broker is
 simply ignored, and `topic_prefix: null` keeps the lamps from publishing state
@@ -223,7 +225,7 @@ is still there and gets discovered automatically:
 ```yaml
 action: esphome.nexus_lampe_pr_event    # name carries the MAC suffix per lamp
 data:
-  event: opened      # opened | merged | closed | success | failure
+  event: opened      # opened | merged | closed | release | success | failure
 ```
 
 For full control there is also `..._pr_flash_rgb` with `red`, `green`, `blue`
@@ -244,19 +246,31 @@ Colour map, defined in the `pr_event` script:
 | `merged` | purple `#8250DF` | 3 |
 | `failure` | red `#D1242F` | 4 |
 | `success` | green `#1A7F37` | 2 |
-| `closed` | grey | 2 |
+| `closed` | red `#D1242F`, as GitHub shows a PR closed unmerged | 2 |
+| `release` | the release show, see below | 3 cycles of 12 s |
+
+Anything else is logged and ignored, so the publisher can add events before
+every lamp knows them. Each blink fades in and out over `flash_fade_ms`.
 
 The flash saves the light's previous state (on/off, brightness, colour) and
 fades back into it afterwards. A second trigger arriving mid-flash restarts the
 flash but keeps the originally saved state, so repeated PRs cannot leave the
 lamp stuck on a status colour.
 
+**The release show** is the `Release` light effect. Each half of the X is an
+arc of five LEDs from one corner through the crossing to the other, so the
+effect works on the distance from the crossing: gold spreads from the middle
+into all four corners, settles into a dim glow with a few white sparks, then
+turns into rainbow rings drifting outwards. One cycle takes `release_cycle_ms`,
+a release gets `release_cycles` of them, each fading in from where the last one
+ended. Any other event arriving during the show ends it and takes over.
+
 ## What the lamp does on its own
 
 No app required for any of this.
 
 **Every power-on:** red, green, blue, about 400 ms each. Confirms the data line
-works and that `rgb_order` is right — red has to come first. Then it restores
+works and that `channel_colors` is right — red has to come first. Then it restores
 whatever state its owner left it in (`restore_mode: RESTORE_DEFAULT_ON`), because
 a lamp with no switch has to light up when you plug it in.
 
